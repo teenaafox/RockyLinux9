@@ -1,0 +1,25 @@
+<Firewall 설정 - 네트워크 어댑터 정보 변경 및 IP 셋팅>
+- VMnet8(NAT)을 사용하는 ens160 장치는 이미 설치되어 있음. IP 주소 셋팅
+    - nmtui edit ens160
+        - ip: 192.168.111.100/24
+        - 게이트웨이: 192.168.111.2
+        - DNS서버:     192.168.111.2
+    - nmcli connection down ens160 && nmcli connection up ens160
+        
+    - 네트워크 어댑터 추가하고 해당 추가 어댑터를 Bridge 타입으로 설정 
+      VMnet0(Bridged)을 사용하는 ens224 장치로 인식
+        - 오른쪽 위 네트워크 모양 아이콘 클릭→[이더넷(ens224) 연결] 클릭→[유선 네트워크 설정]
+        - 이더넷(ens224)의 [설정] 아이콘 클릭 → [신원] 이름:ens224, MAC주소:ens224→[IPv4]클릭:수동, 10.1.1.1 / 255.255.255.0 / 10.1.1.1, 네임서버 끔, 라우팅 끔 → [IPv6]클릭:사용않기 → 적용
+        - ens224 장치의 게이트웨이 삭제
+            # ipv4 gw 설정 비활성화
+            sudo nmcli connection modify ens224 ipv4.gateway ""
+            # DEFROUTE=yes 주석처리 관련 대응 명령
+            sudo nmcli connection modify ens224 ipv4.never-default true
+
+        - sudo nmcli connection down ens224 && nmcli connection up ens224
+
+<나머지 서버 등 - 네트워크 어댑터 정보 변경 및 IP 셋팅>
+- LoadBalancer, WebServer1, WebServer2, MySQLServer1, MySQLServer2,  ProxySQL, RedisServer, Client : 기존 어댑터를 Bridge 타입으로 설정
+- IP 셋팅: nmtui edit ens160 명령으로
+    - LoadBalancer: 10.1.1.20, 255.255.255.0, 10.1.1.1 + nmcli connection down/up ens160
+    - Client: 10.1.1.10, 255.255.255.0, 10.1.1.1 + nmcli connection down/up ens160
