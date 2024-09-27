@@ -1,0 +1,39 @@
+- wordpress 서비스를 `이중화`하여 서비스 안정성을 향상 + 웹 서버 간에 GlusterFS를 사용하여 wordpress의 파일을 공유
+- wordpress 이중화에 따른 사용자 `세션 유지를 위한 redis 서버`를 활용
+- 데이터베이스의 고가용성을 위한 DB서버 백업본을 추가 구축 + ProxySQL을 통해 DB 동작을 수행하게 구성하여 2대의 서버 중(읽기와 쓰기를 분리) 어느 곳으로 명령을 전달해야 할지 추가함
+    1. 방화벽: 192.168.111.100 (Firewalld, RockyLinux9에는 기본적으로 firewalld가 설치되어 있음)
+    2. 로드밸런서: 10.1.1.20 (Nginx)
+    3. 웹 서버 1: 10.1.1.21 (Nginx + PHP + WordPress)
+    4. 웹 서버 2: 10.1.1.22 (Nginx + PHP + WordPress)
+    5. ProxySQL 서버: 10.1.1.23 (Mysql + Proxysql)
+    6. MySQL 서버 1: 10.1.1.24 (Mysql)
+    7. MySQL 서버 2: 10.1.1.25 (Mysql)
+    8. Redis 서버: 10.1.1.26 (Redis)
+
+⇒ 호스트명 및 IP 셋팅 (8대 모두 셋팅)
+
+```bash
+hostnamectl set-hostname LoadBalancer 
+```
+
+vi /etc/hosts
+
+```bash
+10.1.1.20   LoadBalancer
+```
+
+vi /etc/NetworkManager/system-connections/ens160.nmconnection
+```bash
+[ipv4]
+method=manual
+address1=10.1.1.20/24,10.1.1.1
+dns=8.8.8.8
+```
+
+```bash
+systemctl restart NetworkManager
+reboot
+//재부팅 후, 호스트명과 ip 확인
+hostname
+ip addr show 
+```
