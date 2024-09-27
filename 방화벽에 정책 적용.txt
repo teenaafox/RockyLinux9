@@ -1,0 +1,90 @@
+1. **방화벽에 정책 적용**
+
+※ iptables 대신 nftables(NetFilter tables)를 이용하여 방화벽 구축 (firewalld, firewall-cmd를 이용)
+
+💡 매스커레이딩을 통한 인터넷 공유 기능. 192.168.111.100 을 인터넷 연결, 10.1.1.x 를 내부 네트워크 연결로 활용.
+   이때 10.1.1.x IP주소를 사용하는 컴퓨터에서는 10.1.1.20(LoadBalancer의 IP 주소)를 통해 외부에 접속하게 됨
+
+
+## 1. firewalld 의 각 zone, source 에 ens160, ens224 관련 설정
+
+```bash
+sudo firewall-cmd --permanent --zone=internal --add-source=10.1.1.0/24
+sudo firewall-cmd --permanent --zone=internal --add-interface=ens224
+sudo firewall-cmd --permanent --zone=public --add-interface=ens160
+```
+
+## 2. direct 옵션으로 ens224, ens160 간의 FORWARD 정의 (-i: input, -s: source, -d: destination, -m: match, -j, jump)
+
+```bash
+sudo firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -i ens224 -s 10.1.1.0/24 -d 0.0.0.0/0 -m state --state NEW,ESTABLISHED -j ACCEPT
+sudo firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 1 -i ens160 -d 10.1.1.0/24 -m state --state ESTABLISHED -j ACCEPT
+```
+
+## 3. ens160(public) 은 외부 연결 및 매스커레이딩 활성화
+
+```bash
+sudo firewall-cmd --permanent --zone=public --add-masquerade
+```
+
+## 4. ens224(internal) 은 내부와 ens160 간의 연결을 위해 set-target을 통해 영역한 포워딩 허용
+
+```bash
+sudo firewall-cmd --permanent --zone=internal --set-target=ACCEPT
+```
+
+## 5. firewalld 다시 적용 및 네트워크 연결 다시 활성화
+
+```bash
+sudo firewall-cmd --reload && nmcli con up ens160 && nmcli con up ens224
+```
+
+💡 192.168.111.100:80 접속을 10.1.1.20:80 접속으로 포워딩 하기
+
+## 6. 10.1.1.20 서버에서 httpd 설치 및 방화벽의 httpd service 허용 또는 80/tcp 허용
+
+```bash
+sudo dnf -y install httpd
+systemctl start httpd
+systemctl enable httpd
+vi /var/www/html/index.html     // 테스트 화면 만들기 ex) "This is Linux"
+
+sudo firewall-cmd --permanent --zone=public --add-port=80/tcp
+sudo firewall-cmd --reload
+```
+
+## 7. 게이트웨이/방화벽에서 public, internal 에 포트 허용 명령 실행
+
+```bash
+sudo firewall-cmd --permanent --zone=public --add-port=80/tcp
+sudo firewall-cmd --permanent --zone=internal --add-port=80/tcp
+sudo firewall-cmd --reload
+```
+
+## 8. 게이트웨이/방화벽에서 포워딩 설정
+
+```bash
+# 외부에서 firewall의 80번 포트로 들어오는 모든 TCP 트래픽을 10.1.1.20 주소의 80번 포트로 전달하도록 설정
+sudo firewall-cmd --permanent --add-forward-port=port=80:proto=tcp:toaddr=10.1.1.20:toport=80
+```
+
+## 9. 게이트웨이/방화벽에서 direct 옵션으로 설정
+
+- 아래 FORWARD 뒤의 숫자는 우선순위로써 이전 설정된 0, 1에 이어 2, 3을 지정
+
+```bash
+sudo firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 2 -d 10.1.1.20 -p tcp --dport 80 -j ACCEPT
+sudo firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 3 -s 10.1.1.0/24 -d 192.168.111.100 -p tcp --dport 80 -j ACCEPT
+sudo firewall-cmd --permanent --direct --add-rule ipv4 nat PREROUTING 0 -d 192.168.111.100 -p tcp --dport 80 -j DNAT --to-destination 10.1.1.20:80
+sudo firewall-cmd --reload
+```
+
+## tcpdump 명령으로 게이트웨이/방화벽에서 패킷 요청 확인
+
+- 아래 명령을 실행하고 호스트OS 등에서 192.168.111.100 으로 접속하면 로그가 출력됨
+
+```bash
+sudo tcpdump -i ens160 tcp port 80 and dst host 192.168.111.100
+```
+
+- http://192.168.111.100/ 접속해보기
