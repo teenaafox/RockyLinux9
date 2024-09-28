@@ -1,0 +1,74 @@
+- DB서버 설정 (MySQLServer1)
+    
+    : MySQLServer1: 10.1.1.24 (Master)
+    
+    : MySQLServer2: 10.1.1.25 (Slave)
+    
+    1.  mysql 설치 (MySQLServer1)
+    
+    ```bash
+    # 저장소 정보 추가
+    rpm -Uvh https://dev.mysql.com/get/mysql84-community-release-el9-1.noarch.rpm
+    # 저장소 정보 설치 확인
+    ls -l /etc/yum.repos.d/mysql-*.repo
+    # 직전 설치한 yum 저장소 정보에서 일괄 비활성화
+    sed -i 's/enabled=1/enabled=0/' /etc/yum.repos.d/mysql-community.repo
+    # MySQL 8.0 저장소만 활성화하면서 mysql 서버 설치
+    dnf --enablerepo=mysql80-community install mysql-community-server -y
+    # 설치된 제품 버전 등 상세정보 확인
+    dnf info mysql-server
+    dnf info mysql-community-server
+    # mysql 서버 시작
+    systemctl enable mysqld
+    systemctl start mysqld
+    # 임시 비밀번호 찾기
+    grep "A temporary password" /var/log/mysqld.log
+    # root 로그인 테스트
+    mysql -u root -p
+    # root 비밀번호 변경
+    ALTER USER 'root'@'localhost' IDENTIFIED BY '새로운비밀번호';
+    FLUSH PRIVILEGES;
+    
+    # 로그인 시 사용자 인증 미리 입력 방법 ( = -u root -p 를 생략 가능)
+    # .my.cnf 파일 생성하고 보안을 위해 권한 설정
+    touch ~/.my.cnf && chmod 600 ~/.my.cnf
+    # 아래 내용 기재
+    [client]
+    user=사용자명
+    password=비밀번호
+    ```
+    
+    2. 방화벽 설정 (MySQLServer1)
+    
+    ```bash
+    sudo firewall-cmd --permanent --add-port=3306/tcp --zone=public
+    sudo firewall-cmd --permanent --add-port=22/tcp --zone=public  
+    sudo firewall-cmd --reload
+    # sshd 서비스 시작 활성화
+    systemctl start/enable sshd 
+    ```
+    
+    3. WordPress 데이터베이스 및 사용자 생성: wordpressDB, wpUser, PassWord1! (MySQLServer1)
+    
+    ```sql
+    mysql -u root
+    CREATE DATABASE wordpressDB;
+    CREATE USER 'wpUser'@'%' IDENTIFIED BY 'PassWord1!';
+    GRANT ALL PRIVILEGES ON wordpressDB.* TO 'wpUser'@'%';
+    FLUSH PRIVILEGES;
+    ```
+    
+    4. MySQL 설정 파일 수정 (MySQLServer1)
+    
+    `/etc/my.cnf` - [mysqld] 섹션에 다음 내용 추가
+    
+    ```bash
+    [mysqld]
+    bind-address = 0.0.0.0
+    ```
+    
+    5. Mysql 재시작 (MySQLServer1)
+    ```bash
+    systemctl restart mysqld
+    ```
+    
