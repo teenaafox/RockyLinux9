@@ -1,0 +1,227 @@
+- Redis서버 설정 (RedisServer)
+    
+    : RedisServer: 10.1.1.26
+    
+    1.  redis 설치
+        
+        ```bash
+        sudo dnf -y install redis
+        sudo systemctl enable redis
+        sudo systemctl start redis
+        ```
+        
+    2. 방화벽 설정
+        
+        ```bash
+        sudo firewall-cmd --permanent --add-port=6379/tcp --zone=public
+        sudo firewall-cmd --reload
+        ```
+        
+    
+    3. Redis 설정
+    
+    `/etc/redis/redis.conf`
+    
+    ```bash
+    bind 0.0.0.0
+    requirepass change_password
+    ```
+    
+    4. Redis 재시작
+        
+        ```bash
+        sudo systemctl restart redis
+        ```
+        
+
+- 웹 서버 설정 (WebServer1, WebServer2)
+    
+    : WebServer1: 10.1.1.21
+    
+    : WebServer2: 10.1.1.22
+    
+    1.  nginx, php, php확장 설치
+        
+        ```bash
+        sudo dnf install wget nginx php php-fpm php-mysqlnd php-json php-gd php-mbstring -y
+        sudo systemctl enable nginx php-fpm
+        sudo systemctl start nginx php-fpm
+        ```
+        
+    2. 방화벽 설정
+        
+        ```bash
+        sudo firewall-cmd --permanent --add-service=http
+        sudo firewall-cmd --permanent --add-port=80/tcp
+        sudo firewall-cmd --reload
+        ```
+        
+    3. nginx, php-fpm 설정
+        1. nginx 설정
+        
+        `/etc/nginx/nginx.conf`
+        
+        ```bash
+        user nginx;
+        worker_processes auto;
+        error_log /var/log/nginx/error.log;
+        pid /run/nginx.pid;
+        
+        events {
+            worker_connections 1024;
+        }
+        
+        http {
+            include       /etc/nginx/mime.types;
+            default_type  application/octet-stream;
+        
+            server {
+                listen 80;
+                server_name _;
+                root /var/www/html/wordpress;
+                index index.php index.html index.htm;
+        
+                location / {
+                    try_files $uri $uri/ /index.php?$args;
+                }
+        
+                location ~ \.php$ {
+                    fastcgi_pass unix:/var/run/php-fpm/www.sock;
+                    fastcgi_index index.php;
+                    include fastcgi_params;
+                    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                }
+            }
+        }
+        ```
+        
+        b. PHP-FPM 설정
+        
+        `/etc/php-fpm.d/www.conf` 아래 부분 찾아서 확인 및 수정
+        
+        ```bash
+        listen.owner = nginx
+        listen.group = nginx
+        listen.mode = 0660
+        ```
+        
+    4. nginx, php-fpm 재시작
+        
+        ```bash
+        systemctl restart nginx
+        systemctl restart php-fpm
+        ```
+        
+    5. 워드프레스 설치
+        
+        ```bash
+        wget https://ko.wordpress.org/latest-ko_KR.tar.gz
+        sudo mv latest-ko_KR.tar.gz /var/www/html/
+        cd /var/www/html
+        tar xfz latest-ko_KR.tar.gz
+        sudo chown -R nginx:nginx /var/www/html/wordpress
+        ```
+        
+    6. 워드프레스 설정
+    - wordpress 폴더 아래 wp-config.php 파일 수정 (wp-confif-sample.php 카피해서 사용)
+    - AUTH_KEY 이하 내용은 아래 주소를 방문해서 생성된 값을 사용
+        - [api.wordpress.org/secret-key/1.1/salt/](https://api.wordpress.org/secret-key/1.1/salt/)
+        
+        `wp-config.php`
+        
+        ```php
+        <?php
+        define('DB_NAME', 'wordpressDB');
+        define('DB_USER', 'wpUser');
+        define('DB_PASSWORD', 'PassWord1!');
+        define('DB_HOST', '10.1.1.24');   // ????????????????????????????????????????
+        define('DB_CHARSET', 'utf8');
+        define('DB_COLLATE', '');
+        
+        define('AUTH_KEY',         'put your unique phrase here');
+        define('SECURE_AUTH_KEY',  'put your unique phrase here');
+        define('LOGGED_IN_KEY',    'put your unique phrase here');
+        define('NONCE_KEY',        'put your unique phrase here');
+        define('AUTH_SALT',        'put your unique phrase here');
+        define('SECURE_AUTH_SALT', 'put your unique phrase here');
+        define('LOGGED_IN_SALT',   'put your unique phrase here');
+        define('NONCE_SALT',       'put your unique phrase here');
+        
+        $table_prefix = 'wp_';
+        
+        define('WP_DEBUG', false);
+        
+        // Redis 설정
+        define('WP_REDIS_HOST', '192.168.111.104');
+        define('WP_REDIS_PORT', 6379);
+        define('WP_REDIS_PASSWORD', 'p0o9i8u7');
+        ```
+        
+    7. nginx, php-fpm 재시작
+        
+        ```bash
+        systemctl restart nginx
+        systemctl restart php-fpm
+        ```
+        
+    
+- 로드밸런서 설정 (LoadBalancer)
+    
+    : RedisServer: 10.1.1.26
+    
+    1. 방화벽 구축에서 테스트용으로 썼던 httpd를 stop, disable 시킨다.
+    2. nginx 설치
+        
+        ```bash
+        sudo dnf install nginx -y
+        sudo systemctl enable nginx
+        sudo systemctl start nginx
+        ```
+        
+    3. 방화벽 설정
+        
+        ```bash
+        sudo firewall-cmd --permanent --add-service=http
+        sudo firewall-cmd --reload
+        ```
+        
+    4. nginx 로드밸런서 설정
+        - `/etc/nginx/nginx.conf`
+        
+        ```
+        user nginx;
+        worker_processes auto;
+        error_log /var/log/nginx/error.log;
+        pid /run/nginx.pid;
+        
+        events {
+            worker_connections 1024;
+        }
+        
+        http {
+            upstream backend {
+                server 10.1.1.21;
+                server 10.1.1.22;
+            }
+        
+            server {
+                listen 80;
+                server_name _;
+        
+                location / {
+                    proxy_pass http://backend;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                }
+            }
+        }
+        
+        ```
+        
+    5. nginx 재시작
+    ```bash
+    systemctl restart mysqld
+    ```
+    
