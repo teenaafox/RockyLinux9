@@ -1,0 +1,184 @@
+- DB서버 설정 (MySQLServer1, MySQLServer2)
+    
+    : MySQLServer1: 10.1.1.24 (Master)
+    
+    : MySQLServer2: 10.1.1.25 (Slave)
+    
+1. mysql 설치 (MySQLServer2)
+
+```bash
+# 저장소 정보 추가
+rpm -Uvh https://dev.mysql.com/get/mysql84-community-release-el9-1.noarch.rpm
+# 저장소 정보 설치 확인
+ls -l /etc/yum.repos.d/mysql-*.repo
+# 직전 설치한 yum 저장소 정보에서 일괄 비활성화
+sed -i 's/enabled=1/enabled=0/' /etc/yum.repos.d/mysql-community.repo
+# MySQL 8.0 저장소만 활성화하면서 mysql 서버 설치
+dnf --enablerepo=mysql80-community install mysql-community-server -y
+# 설치된 제품 버전 등 상세정보 확인
+dnf info mysql-server
+dnf info mysql-community-server
+# mysql 서버 시작
+systemctl enable mysqld
+systemctl start mysqld
+# 임시 비밀번호 찾기
+grep "A temporary password" /var/log/mysqld.log
+# root 로그인 테스트
+mysql -u root -p
+# root 비밀번호 변경
+ALTER USER 'root'@'localhost' IDENTIFIED BY '새로운비밀번호';
+FLUSH PRIVILEGES;
+
+# 로그인 시 사용자 인증 미리 입력 방법 ( = -u root -p 를 생략 가능)
+# .my.cnf 파일 생성하고 보안을 위해 권한 설정
+touch ~/.my.cnf && chmod 600 ~/.my.cnf
+# 아래 내용 기재
+[client]
+user=사용자명
+password=비밀번호
+```
+
+2. 방화벽 설정 (MySQLServer2)
+
+```bash
+sudo firewall-cmd --permanent --add-port=3306/tcp --zone=public
+sudo firewall-cmd --permanent --add-port=22/tcp --zone=public  
+sudo firewall-cmd --reload
+# sshd 서비스 시작 활성화
+systemctl start/enable sshd 
+```
+
+3. 복제를 위한 MySQL 사용자 생성: reUser, 1234 (MySQLServer1)
+
+```bash
+CREATE USER 'reUser'@'10.1.1.25' IDENTIFIED WITH mysql_native_password BY 'PassWord1!';
+GRANT REPLICATION SLAVE ON **.** TO 'reUser'@'10.1.1.25';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+4. MySQL 설정 파일 수정 (MySQLServer1, MySQLServer2)
+
+`/etc/my.cnf` - [mysqld] 섹션에 다음 내용 추가
+
+```bash
+[mysqld] 
+server-id = 1             // Master DB 
+log_bin = mysql-bin
+binlog_do_db = wordpressDB  // wordpressDB
+bind-address = 0.0.0.0    // MySQLServer 원격 접속 허용
+```
+
+```bash
+[mysqld] 
+server-id = 2             // Slave DB 
+log_bin = mysql-bin
+bind-address = 0.0.0.0    // MySQLServer 원격 접속 허용
+```
+
+5. Mysql 재시작 (MySQLServer1, MySQLServer2)
+
+```bash
+systemctl restart mysqld
+```
+
+6. DB 덤프 (MySQLServer1)
+
+```bash
+mysql> FLUSH TABLES WITH READ LOCK;     
+$ mysqldump -u root wordpressDB > wordpressDB.sql
+```
+
+7. DB 덤프 파일 전송: 10.1.1.24 -> 10.1.1.25 (MySQLServer1)
+
+```bash
+$ scp wordpressDB.sql rocky@10.1.1.25:/home/rocky/wordpressDB.sql
+mysql> UNLOCK TABLES;    
+```
+
+8. 현재 바이너리 로그 위치 확인 (MySQLServer1)
+
+```sql
+SHOW MASTER STATUS;
+EXIT
+```
+
+9. DB 생성 (깡통) (MySQLServer2)
+
+```sql
+mysql –u root
+CREATE DATABASE wordpressDB;
+EXIT
+```
+
+10. DB 덤프파일 적용 (MySQLServer2)
+
+```sql
+$ mysql –u root wordpressDB < wordpressDB.sql
+```
+
+11. Slave 중지 (MySQLServer2)
+
+```sql
+$ mysql –u root
+STOP SLAVE;
+```
+
+12. 복제 설정 (MySQLServer2)
+
+```sql
+CHANGE MASTER TO
+MASTER_HOST='10.1.1.24',
+MASTER_PORT=3306,           // 추가함
+MASTER_USER='reUser',
+MASTER_PASSWORD='PassWord1!',
+MASTER_LOG_FILE='mysql-bin.000001',  # 마스터의 SHOW MASTER STATUS 결과에서 확인한 값
+MASTER_LOG_POS=157;                  # 마스터의 SHOW MASTER STATUS 결과에서 확인한 값
+```
+
+13. 복제 시작 (MySQLServer2)
+
+```sql
+START SLAVE;
+```
+
+14. 복제 상태 확인 (MySQLServer2)
+
+```sql
+pager more -d    // 페이지 단위로. cf) nopager로 원상복귀
+SHOW SLAVE STATUS\G
+```
+
+    <결과>
+
+```sql
+************************** 1. row ***************************
+Slave_IO_State: Waiting for source to send event
+Master_Host: 10.1.1.24
+Master_User: reUser
+Master_Port: 3306
+Connect_Retry: 60
+Master_Log_File: mysql-bin.000001
+Read_Master_Log_Pos: 157
+Relay_Log_File: localhost-relay-bin.000002
+Relay_Log_Pos: 326
+Relay_Master_Log_File: mysql-bin.000003
+Slave_IO_Running: Yes <---- 체크 포인트
+Slave_SQL_Running: Yes <---- 체크 포인트
+Replicate_Do_DB: wordpressDB
+Replicate_Ignore_DB:
+Replicate_Do_Table:
+```
+
+15. 복제 상태 확인 (MySQLServer1)
+
+```sql
+SHOW PROCESSLIST\G;
+```
+
+※ **DB 동기화 여부 확인 방법 (워드프레스 계정생성)**
+
+- 워드프레스에서 계정생성 후, 마스터 / 슬레이브에서 각각 생성된 계정 확인
+mysql –u root
+USE wordpressDB
+SELECT user_login FROM wp_users;
