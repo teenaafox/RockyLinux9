@@ -2,7 +2,7 @@
     
     : RedisServer: 10.1.1.26
     
-    1.  redis 설치
+    1. Redis 설치
         
         ```bash
         sudo dnf -y install redis
@@ -24,7 +24,7 @@
     
     ```bash
     bind 0.0.0.0
-    requirepass change_password
+    requirepass p0o9i8u7
     ```
     
     4. Redis 재시작
@@ -134,7 +134,7 @@
         define('DB_NAME', 'wordpressDB');
         define('DB_USER', 'wpUser');
         define('DB_PASSWORD', 'PassWord1!');
-        define('DB_HOST', '10.1.1.24');   // ????????????????????????????????????????
+        define('DB_HOST', '10.1.1.24');  
         define('DB_CHARSET', 'utf8');
         define('DB_COLLATE', '');
         
@@ -152,7 +152,7 @@
         define('WP_DEBUG', false);
         
         // Redis 설정
-        define('WP_REDIS_HOST', '192.168.111.104');
+        define('WP_REDIS_HOST', '10.1.1.26');
         define('WP_REDIS_PORT', 6379);
         define('WP_REDIS_PASSWORD', 'p0o9i8u7');
         ```
@@ -167,7 +167,7 @@
     
 - 로드밸런서 설정 (LoadBalancer)
     
-    : RedisServer: 10.1.1.26
+    : LoadBalancer: 10.1.1.20
     
     1. 방화벽 구축에서 테스트용으로 썼던 httpd를 stop, disable 시킨다.
     2. nginx 설치
@@ -221,7 +221,20 @@
         ```
         
     5. nginx 재시작
-    ```bash
-    systemctl restart mysqld
-    ```
-    
+        
+        ```bash
+        systemctl restart nginx
+        ```
+        
+
+● 21, 22 서버에서 접속이 분배되는지 로그 모니터링을 하기 위해서는
+    - `tail -f` 명령을 사용한다
+    - 로그 위치는 `/var/log/nginx/access.log`
+
+⇒ 로그인 화면에서 다음 페이지로 안 넘어가고, 계속 로그인 화면에 남아있는 현상 발생
+⇒ 로드밸런서 nginx.conf 파일 안에 
+upstream backend {
+	ip_hash;           // 한 줄 추가해줌으로써 해결
+	server 10.1.1.21;
+	server 10.1.1.22;
+}
