@@ -1,0 +1,83 @@
+<aside>
+💡
+
+gluster 세팅이 잘 되고 각 공유 원천 시스템과 공유받을 클라이언트 시스템의 오류가 있는 경우 공유 원천을 stop & start (restart) 해야하는데, 자동으로 수행하기 위해 cron 이 아닌 systemd.timer 방식을 활용하도록 구성해본 예제입니다.
+
+구동은 항상 공유 원천인 서버가 먼저 재시작된 후에 공유 받을 클라이언트 시스템이 재시작되어야 합니다.
+
+</aside>
+
+systemd.timer를 사용하여 **`시스템 부팅 후 1초 뒤`에 `gluster 볼륨을 재시작`**하는 구성을 만들기 위해 다음 절차를 따르세요
+
+1. 서비스 유닛 파일 생성
+    
+    ```bash
+    sudo vi /etc/systemd/system/gluster-restart.service
+    
+    ```
+    
+    다음 내용을 입력하세요
+    
+    ```jsx
+    [Unit]
+    Description=Restart Gluster Volume gv0
+    After=network.target glusterd.service
+    Requires=glusterd.service
+    
+    [Service]
+    Type=oneshot
+    ExecStart=/bin/sh -c 'echo y | gluster volume stop gv0 && gluster volume start gv0'
+    
+    [Install]
+    WantedBy=multi-user.target
+    
+    ```
+    
+
+2. 타이머 유닛 파일 생성
+    
+    ```bash
+    sudo vi /etc/systemd/system/gluster-restart.timer
+    
+    ```
+    
+    다음 내용을 입력하세요
+    
+    ```
+    [Unit]
+    Description=Timer for Restarting Gluster Volume gv0
+    
+    [Timer]
+    OnActiveSec=10s
+    Unit=gluster-restart.service
+    
+    [Install]
+    WantedBy=timers.target
+    
+    ```
+    
+
+3. systemd 데몬 리로드
+    
+    ```bash
+    sudo systemctl daemon-reload
+    
+    ```
+    
+4. 타이머 활성화 및 시작
+    
+    ```bash
+    sudo systemctl enable gluster-restart.timer
+    sudo systemctl start gluster-restart.timer
+    
+    ```
+    
+5. 타이머 상태 확인 (선택사항)
+    
+    ```bash
+    sudo systemctl status gluster-restart.timer
+    
+    ```
+    
+
+이 구성으로 시스템이 부팅된 후 10초 뒤에 gluster 볼륨 gv0이 자동으로 재시작됩니다.
