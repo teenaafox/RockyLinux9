@@ -1,0 +1,76 @@
+# 06 Gluster로 워드프레스 파일 공유
+
+- WebServer1, WebServer2를 호스트이름으로 추가
+```bash
+vi /etc/hosts
+
+10.1.1.21 WebServer1
+10.1.1.22 WebServer2
+```
+1. GlusterFS 9 설치 (WebServer1, WebServer2)
+
+```bash
+sudo dnf -y install centos-release-gluster9
+sudo dnf -y install glusterfs-server
+sudo systemctl enable --now glusterd
+```
+
+2. 방화벽 설정 (WebServer1, WebServer2)
+
+```bash
+sudo firewall-cmd --permanent --add-service=glusterfs
+sudo firewall-cmd --reload
+```
+
+3. WebServer1에서 GlusterFS 볼륨 생성
+
+```bash
+sudo mkdir -p /mnt/gluster_data/volume1
+sudo gluster volume create gv0 transport tcp WebServer1:/mnt/gluster_data/volume1 force
+sudo gluster volume start gv0WebServer2를 GlusterFS 클라이언트로 설정
+```
+
+4. WebServer2를 GlusterFS 클라이언트로 설정
+```bash
+sudo mkdir -p /mnt/gluster
+sudo mount -t glusterfs WebServer1:/gv0 /mnt/gluster
+```
+
+5. 마운트 지점을 영구적으로 만들기 위해 WebServer2의 /etc/fstab에 다음 줄 추가
+
+```bash
+WebServer1:/gv0 /mnt/gluster glusterfs defaults,_netdev,x-systemd.automount 0 0
+# _netdev: 네트워크 기반 파일 시스템임을 지정하여 네트워크가 연결된 후에 마운트.
+# x-systemd.automount: 마운트 포인트에 접근할 때 자동으로 마운트함.
+```
+
+6. 공유 작업
+
+```bash
+# WebServer1 에서
+# WordPress 파일을 GlusterFS 볼륨으로 이동
+sudo mv /var/www/html/wordpress /mnt/gluster_data/volume1
+# 심볼릭 링크 생성
+sudo ln -s /mnt/gluster_data/volume1/wordpress /var/www/html/wordpress
+# 권한 설정
+sudo chown -R nginx:nginx /mnt/gluster_data/volume1/wordpress
+sudo chmod -R 755 /mnt/gluster_data/volume1/wordpress
+
+# WebServer2 에서
+# 기존 WordPress 파일 백업
+sudo mv /var/www/html/wordpress /var/www/html/wordpress_backup
+# GlusterFS 볼륨을 마운트하고 심볼릭 링크 생성
+sudo ln -s /mnt/gluster/wordpress /var/www/html/wordpress
+# 권한 설정
+sudo chown -R nginx:nginx /mnt/gluster/wordpress
+sudo chmod -R 755 /mnt/gluster/wordpress
+```
+
+7. 서비스 테스트 (WebServer1, WebServer2)
+```bash
+# 마운트 상태 확인
+df -h
+
+# Nginx가 제대로 WordPress 파일에 접근할 수 있는지 확인
+sudo systemctl restart nginx
+```

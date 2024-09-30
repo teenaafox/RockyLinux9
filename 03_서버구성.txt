@@ -36,4 +36,5 @@ reboot
 //재부팅 후, 호스트명과 ip 확인
 hostname
 ip addr show 
+ping -c 3 8.8.8.8
 ```
