@@ -1,0 +1,265 @@
+# MiniProject - 08 ProxySQL 구축
+
+<aside>
+💡
+
+고가용성을 목적으로한 복제(replication) 서버를 구성했다면 실제 애플리케이션 서버에서는 다수의 서버 중 어느 곳으로 명령을 전달해야 할지 별도의 설정이 필요하다. (읽기와 쓰기를 분리했을 경우 특히)
+
+아래의 방식으로 구성을 하고 애플리케이션 서버는 ProxySQL을 통해 DB 동작을 수행하게 구성하면 인프라 구성만으로 앱의 동작에 대한 처리 분리가 가능하다
+
+</aside>
+
+<aside>
+💡
+
+ProxySQL 서버를 DB 마스터와 슬레이브 앞단에 설치하는 주요 역할은 다음과 같습니다:
+
+1. **로드 밸런싱 (Load Balancing):** ProxySQL은 여러 개의 MySQL 서버에 대한 쿼리 트래픽을 분배할 수 있습니다. 일반적으로 읽기 쿼리는 슬레이브로, 쓰기 쿼리는 마스터로 전달함으로써, 데이터베이스 서버의 부하를 분산하고 성능을 향상시킵니다.
+2. **장애 조치 (Failover):** 마스터 서버 또는 슬레이브 서버에 문제가 발생할 경우, ProxySQL은 이를 감지하고 자동으로 쿼리를 다른 서버로 전달하여 장애를 최소화할 수 있습니다. 예를 들어 마스터 서버가 다운되면 슬레이브를 새로운 마스터로 승격시키고, 트래픽을 그쪽으로 유도할 수 있습니다.
+3. **쿼리 라우팅 (Query Routing):** ProxySQL은 쿼리 유형에 따라 특정 데이터베이스로 쿼리를 보낼 수 있습니다. 쓰기 쿼리는 마스터로, 읽기 쿼리는 슬레이브로 라우팅하는 방식으로 데이터베이스 리소스를 더 효율적으로 사용할 수 있습니다.
+4. **연결 관리 (Connection Pooling):** ProxySQL은 클라이언트 연결을 풀링하여 데이터베이스 서버로의 연결 수를 줄이고 성능을 최적화합니다. 이를 통해 데이터베이스 서버에 대한 과부하를 방지할 수 있습니다.
+5. **모니터링 및 장애 탐지 (Monitoring and Health Checks):** ProxySQL은 백엔드 데이터베이스 서버의 상태를 지속적으로 모니터링하여, 서버가 정상적으로 작동하지 않을 경우 쿼리 라우팅을 자동으로 조정할 수 있습니다.
+
+결론적으로, ProxySQL은 MySQL 마스터-슬레이브 구성에서 성능 향상, 부하 분산, 장애 대응을 자동화하여 데이터베이스 인프라의 안정성과 효율성을 높이는 중요한 역할을 합니다.
+
+</aside>
+
+1. ProxySQL 설치를 위한 리포지토리 추가
+    
+    ```bash
+    sudo tee /etc/yum.repos.d/proxysql.repo << EOF
+    [proxysql]
+    name=ProxySQL YUM repository
+    baseurl=https://repo.proxysql.com/ProxySQL/proxysql-2.7.x/centos/\$releasever
+    gpgcheck=1
+    gpgkey=https://repo.proxysql.com/ProxySQL/proxysql-2.7.x/repo_pub_key
+    EOF
+    ```
+    
+2. ProxySQL 설치 및 서비스 활성화/시작
+    
+    ```bash
+    sudo dnf install proxysql -y
+    sudo systemctl start proxysql
+    sudo systemctl enable proxysql
+    ```
+    
+3. MySQL 설치 및 서비스 활성화/시작
+    
+    ```bash
+    sudo dnf -y install mysql-server
+    sudo systemctl enable mysqld
+    sudo systemctl start mysqld
+    ```
+    
+4. 방화벽 설정 (ProxyServer)
+    
+    ```bash
+    sudo firewall-cmd --permanent --add-port=6033/tcp
+    sudo firewall-cmd --reload
+    ```
+    
+5. 모니터링 사용자 설정 (모니터링이 필요한 서버들에 생성, MySQLServer1, MySQLServer2)
+    
+    ```sql
+    CREATE USER 'proxysql_monitor'@'10.1.1.23' IDENTIFIED BY '123456';
+    # REPLICATION CLIENT권한은 MySQL서버의 복제상태를 확인하는데 필요한 권한
+    # ProxySQL이 서버의 상태를 모니터링할 때 필요한 정보(복제 상태 등)를 가져오는데 이 권한이 유용
+    GRANT REPLICATION CLIENT ON *.* TO 'proxysql_monitor'@'10.1.1.23';
+    # ProxySQL이 더 많은 모니터링 데이터를 확인하려면 이 권한이 유용
+    GRANT SELECT ON sys.* TO 'proxysql_monitor'@'10.1.1.23';
+    GRANT SELECT ON wordpressDB.* TO 'proxysql_monitor'@'10.1.1.23';
+    FLUSH PRIVILEGES;
+    ```
+    
+6. ProxySQL 관리 서버 (6032 포트)에 접속 (ProxyServer)
+    
+    ```bash
+    # ProxySQL 설정을 관리하고 MySQL서버(마스터 및 슬레이브)를 모니터링, 설정
+    mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> '
+    ```
+    
+7. ProxySQL 모니터링 설정  (ProxyServer)
+- ProxySQL에서 MySQL 모니터링을 설정하고, 활성화한 후, 관련 로그를 확인하는 과정
+    
+    ```sql
+    # ProxySQL에서 미리 정의된 전역 변수
+    # mysql-monitor_username: MySQL 서버를 모니터링할 때 사용하는 사용자 이름
+    # mysql-monitor_password: 모니터링 사용자에 대한 비밀번호
+    # mysql-monitor_enabled: MySQL 서버 모니터링 기능을 활성화(1)하거나 비활성화(0)
+    
+    # ProxySQL의 모니터링 사용자 이름을 'proxysql_monitor'로 설정
+    UPDATE global_variables SET variable_value='proxysql_monitor'
+    WHERE variable_name='mysql-monitor_username';
+    
+    # ProxySQL의 모니터링 사용자 비밀번호를 'passWord1!'로 설정
+    UPDATE global_variables SET variable_value='passWord1!'
+    WHERE variable_name='mysql-monitor_password';
+    
+    --모니터링 활성화
+    UPDATE global_variables SET variable_value='true'
+    WHERE variable_name='mysql-monitor_enabled';
+    
+    # 변경된 MySQL 변수들을 런타임에 로드. 즉, 변경사항을 즉시 적용
+    LOAD MYSQL VARIABLES TO RUNTIME;
+    # 변경된 MySQL 변수들을 디스크에 저장
+    # 이로써 ProxySQL 재시작 후에도 설정이 유지
+    SAVE MYSQL VARIABLES TO DISK;
+    
+    --모니터링 로그 확인
+    # MySQL 서버 연결 로그의 최근 10개 항목을 시간 역순으로 조회
+    SELECT * FROM mysql_server_connect_log ORDER BY time_start_us DESC LIMIT 10;
+    # MySQL 서버 ping 로그의 최근 10개 항목을 시간 역순으로 조회
+    SELECT * FROM mysql_server_ping_log ORDER BY time_start_us DESC LIMIT 10;
+    ```
+    
+8. ProxySQL 에서 관리 대상 MySQL 서버 추가 (ProxyServer)
+    
+    ```sql
+    # ProxySQL에 두 개의 MySQL 서버를 추가하고, 이들을 writer와 reader 그룹으로 구성한 뒤, 이 설정을 즉시 적용하고 영구적으로 저장하는 과정
+    
+    # hostgroup_id가 1(일반적으로 writer 그룹)인 서버를 추가
+    INSERT INTO mysql_servers(hostgroup_id, hostname, port) VALUES (1, '10.1.1.24', 3306);
+    # hostgroup_id가 2(일반적으로 reader 그룹)인 서버를 추가
+    INSERT INTO mysql_servers(hostgroup_id, hostname, port) VALUES (2, '10.1.1.25', 3306);
+    
+    -- 복제 호스트 그룹 설정
+    # writer_hostgroup을 1로, reader_hostgroup을 2로 설정
+    # 이 설정에 'cluster1'이라는 댓글을 추가
+    # => ProxySQL에게 1번이 쓰기 작업을, 2번이 읽기 작업을 처리한다고 알려줌
+    INSERT INTO mysql_replication_hostgroups (writer_hostgroup, reader_hostgroup, comment)
+    VALUES (1, 2, 'cluster1');
+    
+    # 변경된 MySQL 서버 설정을 런타임에 로드
+    LOAD MYSQL SERVERS TO RUNTIME;
+    # 변경된 MySQL 서버 설정을 디스크에 저장
+    SAVE MYSQL SERVERS TO DISK;
+    
+    ```
+    
+9. 각 마스터, 슬레이브 MySQL 서버에 사용자 추가 (MySQLServer1, MySQLServer2)
+    
+    ```sql
+    # 마스터와 슬레이브 MySQL 서버에 proxysql_user 생성
+    CREATE USER 'proxysql_user'@'%' IDENTIFIED BY 'passWord1!';
+    GRANT ALL PRIVILEGES ON *.* TO 'proxysql_user'@'%';
+    FLUSH PRIVILEGES;
+    
+    ```
+    
+10. ProxySQL 마스터, 슬레이브 서버 접속 설정 (ProxyServer)
+    
+    ```sql
+    # ProxySQL 서버에 동일한 사용자 정보 등록
+    --마스터, 슬레이브에 접속할 사용자 정보를 입력해줌
+    # ProxySQL에 'proxysql_user'라는 새로운 사용자를 등록하는 것
+    # 이 사용자는 ProxySQL을 통해 MySQL 서버에 접근할 때 사용
+    INSERT INTO mysql_users(username, password, default_hostgroup) VALUES ('proxysql_user', 'passWord1!', 1);
+    
+    LOAD MYSQL USERS TO RUNTIME;
+    SAVE MYSQL USERS TO DISK;
+    
+    # 데이터베이스 사용자(wpUser) 정보 등록
+    #INSERT INTO mysql_users(username, password, default_hostgroup) VALUES ('wpUser', '1234', 1);
+    
+    #LOAD MYSQL USERS TO RUNTIME;
+    #SAVE MYSQL USERS TO DISK;
+    ```
+    
+11. ProxySQL 서버에 쿼리 규칙 설정 (읽기/쓰기 분리) (ProxyServer)
+    
+    ```sql
+    # 읽기/쓰기 분리(Read/Write Splitting) 전략을 구현하는 것
+    # 쓰기 작업은 마스터로, 읽기 작업은 슬레이브로 분산시켜 전체적인 데이터베이스 성능을 향상시키는 데 도움
+    
+    -- INSERT, UPDATE, DELETE 쿼리를 쓰기 서버로 라우팅
+    # INSERT, UPDATE, DELETE 쿼리는 hostgroup 1(마스터 서버)로 라우팅
+    INSERT INTO mysql_query_rules (rule_id, active, match_pattern, destination_hostgroup, apply)
+    VALUES (1, 1, '^(INSERT|UPDATE|DELETE)', 1, 1);
+    
+    -- SELECT 쿼리를 읽기 전용 서버로 라우팅
+    # SELECT 쿼리는 hostgroup 2(슬레이브 서버)로 라우팅
+    INSERT INTO mysql_query_rules (rule_id, active, match_pattern, destination_hostgroup, apply)
+    VALUES (2, 1, '^SELECT', 2, 1);
+    
+    LOAD MYSQL QUERY RULES TO RUNTIME;
+    SAVE MYSQL QUERY RULES TO DISK;
+    
+    ```
+    
+12. ProxySQL 서버의 설정 내용 확인 (ProxyServer)
+    
+    ```sql
+    SELECT * FROM mysql_servers;
+    SELECT * FROM mysql_users;
+    SELECT * FROM mysql_query_rules;
+    
+    ```
+    
+13. MySQL 서버(슬레이브 서버)에 대한 읽기 전용 설정 (MySQLServer2)
+    
+    ```sql
+    SET GLOBAL read_only = 1;
+    # 적용 확인
+    SHOW GLOBAL VARIABLES LIKE 'read_only';
+    
+    --또는 /etc/my.cnf 파일에 적용 가능
+    [mysqld]
+    read_only=1
+    ```
+    
+14. ProxySQL 동작 확인
+    - hostname 식별을 위해 `sudo hostnamectl set-hostname db-ro` 명령으로 호스트를 변경 (예시를 읽기 전용 서버로 보기 위해 db-ro 로 변경)
+    
+    ```sql
+    mysql -u proxysql_user -ppassWord1! -h 127.0.0.1 -P6033 -e "select @@hostname;"
+    
+    # 에러로그 확인
+    tail -f /var/lib/proxysql/proxysql.log
+    ```
+    
+15. WebServer1, WebServer2 설정 수정
+    
+    `wp-config.php`
+    
+    ```php
+    <?php
+    define('DB_NAME', 'wordpressDB');
+    define('DB_USER', 'proxysql_user');
+    define('DB_PASSWORD', 'passWord1!');
+    define('DB_HOST', '10.1.1.23:6033'); 
+    define('DB_CHARSET', 'utf8');
+    define('DB_COLLATE', '');
+    
+    define('AUTH_KEY',         'put your unique phrase here');
+    define('SECURE_AUTH_KEY',  'put your unique phrase here');
+    define('LOGGED_IN_KEY',    'put your unique phrase here');
+    define('NONCE_KEY',        'put your unique phrase here');
+    define('AUTH_SALT',        'put your unique phrase here');
+    define('SECURE_AUTH_SALT', 'put your unique phrase here');
+    define('LOGGED_IN_SALT',   'put your unique phrase here');
+    define('NONCE_SALT',       'put your unique phrase here');
+    
+    $table_prefix = 'wp_';
+    
+    define('WP_DEBUG', false);
+    
+    # Redis 설정
+    define('WP_REDIS_HOST', '10.1.1.26');
+    define('WP_REDIS_PORT', 6379);
+    define('WP_REDIS_PASSWORD', 'p0o9i8u7');
+    ```
+    
+16. nginx, php-fpm 재시작
+    
+    ```bash
+    systemctl restart nginx
+    systemctl restart php-fpm
+    ```
+    
+
+접속 시도 http://192.168.111.100
+
+실패 →  WebServer1의 /mnt/gluster_data/volume1/wordpress/wp-config.php 파일 확인 및 WebServer2의 /mnt/gluster/wordpress/wp-config.php 파일 확인 → 성공
+
+→ /var/www/html/wordpress/wp-config.php 파일 수정 하는 것이 맞나, 글러스터 한 폴더 wp-config.php 파일 수정하는 것이 맞나? 다시 해봐~
