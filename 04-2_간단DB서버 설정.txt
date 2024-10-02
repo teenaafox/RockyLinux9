@@ -1,0 +1,44 @@
+- DB서버 설정 (MySQLServer1)
+    
+    
+    1.  mysql 설치 (MySQLServer1)
+    
+    ```bash
+    sudo dnf -y install mysql-server
+    sudo systemctl enable mysqld
+    sudo systemctl start mysqld
+    ```
+    
+    2. 방화벽 설정 (MySQLServer1)
+    
+    ```bash
+    sudo firewall-cmd --permanent --add-port=3306/tcp --zone=public
+    sudo firewall-cmd --permanent --add-port=22/tcp --zone=public  
+    sudo firewall-cmd --reload
+    # sshd 서비스 시작 활성화
+    systemctl enable sshd && systemctl start sshd 
+    ```
+    
+    3. WordPress 데이터베이스 및 사용자 생성: wordpressDB, wpUser, 1234 (MySQLServer1)
+    
+    ```sql
+    mysql -u root
+    CREATE DATABASE wordpressDB;
+    CREATE USER 'wpUser'@'%' IDENTIFIED BY '1234';
+    GRANT ALL PRIVILEGES ON wordpressDB.* TO 'wpUser'@'%';
+    FLUSH PRIVILEGES;
+    ```
+    
+    4. MySQL 설정 파일 수정 (MySQLServer1)
+    
+    `/etc/my.cnf` - [mysqld] 섹션에 다음 내용 추가
+    
+    ```bash
+    [mysqld]
+    bind-address = 0.0.0.0
+    ```
+    
+    5. Mysql 재시작 (MySQLServer1)
+    ```bash
+    systemctl restart mysqld
+    ```
