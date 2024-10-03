@@ -1,0 +1,103 @@
+내부 DNS 서버 (10.1.1.30)
+
+1. bind, bind-utils 설치
+    
+    ```bash
+    sudo dnf -y install bind bind-utils
+    sudo systemctl start named
+    sudo systemctl enable named
+    ```
+    
+2. 방화벽 설정 
+    
+    ```bash
+    sudo firewall-cmd --permanent --add-service=dns --zone=public
+    sudo firewall-cmd --reload
+    ```
+    
+3. bind 구성
+    
+    `/etc/named.conf` 
+    
+    ```bash
+    options {
+        listen-on port 53 { 127.0.0.1; 10.1.1.30; };
+        directory       "/var/named";
+        allow-query     { localhost; 10.1.1.0/24; };
+        recursion yes;
+    };
+    
+    zone "hangaram.com" IN {
+        type master;
+        file "hangaram.com.zone";
+        allow-update { none; };
+    };
+    ```
+    
+4. 문법상 이상이 없는지 확인
+    
+    ```bash
+    named-checkconf 
+    # 아무 메세지도 나오지 않으면 틀린 문법이 없다는 뜻
+    ```
+    
+5. 영역 파일 (또는 존 파일) 생성
+    
+    `/var/named/hangaram.com.zone` (touch hangaram.com.zone)
+    
+    ```bash
+    $TTL 86400
+    @   IN  SOA     NameServer.hangaram.com. admin.hangaram.com. (
+                    2023011801  ; Serial
+                    3600        ; Refresh
+                    1800        ; Retry
+                    604800      ; Expire
+                    86400 )     ; Minimum TTL
+    
+    @   IN  NS      NameServer.hangaram.com.
+    NameServer IN  A       10.1.1.30
+    Client IN  A       10.1.1.10
+    LoadBalancer IN  A       10.1.1.20
+    WebServer1 IN  A       10.1.1.21
+    WebServer2 IN  A       10.1.1.22
+    ProxySQL IN  A       10.1.1.23
+    MySQLServer1 IN  A       10.1.1.24
+    MySQLServer2 IN  A       10.1.1.25
+    RedisServer IN  A       10.1.1.26
+    ```
+    
+6. 문법상 이상이 없는지 확인
+    
+    ```bash
+    named-checkzone hangaram.com hangaram.com.zone
+    # OK
+    ```
+    
+7. bind 재시작
+    
+    ```bash
+    sudo systemctl restart named
+    sudo systemctl status named
+    ```
+    
+8. 다른 9대 서버의 DNS 주소를 수정
+    
+    `/etc/resolv.conf`
+    
+    ```bash
+    nameserver 10.1.1.30
+    ```
+    
+9. 확인
+    ```bash
+    nslookup
+    > server
+    Default server: 10.1.1.30
+    Address: 10.1.1.30#53
+    > WebServer1.hangaram.com
+    Server:  10.1.1.30
+    Address: 10.1.1.30#53
+    Name: WebServer1.hangaram.com
+    Address: 10.1.1.21
+    exit
+    ```

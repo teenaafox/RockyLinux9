@@ -1,0 +1,133 @@
+외부 DNS 서버 (192.168.111.200) → hangaram.com을 192.168.219.108로 연결
+
+1. bind, bind-utils 설치
+    
+    ```bash
+    sudo dnf -y install bind bind-utils
+    sudo systemctl start named
+    sudo systemctl enable named
+    ```
+    
+2. 방화벽 설정 
+    
+    ```bash
+    sudo firewall-cmd --permanent --add-service=dns --zone=public
+    sudo firewall-cmd --reload
+    ```
+    
+3. bind 구성
+    
+    `/etc/named.conf` 
+    
+    ```bash
+    options {
+        listen-on port 53 { any; };
+        directory       "/var/named";
+        allow-query     { any; };
+        recursion no;  # 보안상 더 안전한 구성이며, 공개 DNS 서버에 권장
+    };
+    
+    zone "hangaram.com" IN {
+        type master;
+        file "hangaram.com.zone";
+        allow-update { none; };
+    };
+    ```
+    
+4. 문법상 이상이 없는지 확인
+    
+    ```bash
+    named-checkconf 
+    # 아무 메세지도 나오지 않으면 틀린 문법이 없다는 뜻
+    ```
+    
+5. 영역 파일 (또는 존 파일) 생성
+    
+    `/var/named/hangaram.com.zone` (touch hangaram.com.zone)
+    
+    ```bash
+    $TTL 86400
+    @   IN  SOA     ns1.hangaram.com. admin.hangaram.com. (
+                    2023011801  ; Serial
+                    3600        ; Refresh
+                    1800        ; Retry
+                    604800      ; Expire
+                    86400 )     ; Minimum TTL
+    
+    @   IN  NS      ns1.hangaram.com.
+    @   IN  A       192.168.219.108
+    www IN  A       192.168.219.108
+    ns1 IN  A       192.168.111.200
+    ```
+    
+6. 문법상 이상이 없는지 확인
+    
+    ```bash
+    named-checkzone hangaram.com hangaram.com.zone
+    # OK
+    ```
+    
+7. bind 재시작
+    
+    ```bash
+    sudo systemctl restart named
+    sudo systemctl status named
+    ```
+    
+8. 외부에서 접속하는 Firewall(192.168.111.100)의 DNS 설정 변경
+    
+    `/etc/resolv.conf`
+    
+    ```bash
+    nameserver 192.168.111.200
+    ```
+    
+    `/etc/hosts`
+    
+    ```bash
+    192.168.219.108 hangaram.com
+    ```
+    
+9. 내 PC (192.168.219.108)의  DNS 설정 변경
+    
+    ### 1. **제어판 열기**
+    
+    - **Windows 검색창**에 "제어판"을 입력하고 **제어판**을 엽니다.
+    
+    ### 2. **네트워크 및 공유 센터로 이동**
+    
+    - "네트워크 및 인터넷"을 클릭한 후, **"네트워크 및 공유 센터"**를 선택합니다.
+    
+    ### 3. **어댑터 설정 변경**
+    
+    - 왼쪽 메뉴에서 **"어댑터 설정 변경"**을 클릭합니다.
+    
+    ### 4. **네트워크 연결 선택**
+    
+    - 사용 중인 네트워크 연결(유선 LAN 또는 무선 Wi-Fi)을 **우클릭**하고, **"속성"**을 클릭합니다.
+    
+    ### 5. **인터넷 프로토콜 버전 4 (TCP/IPv4) 설정 변경**
+    
+    - 목록에서 **"인터넷 프로토콜 버전 4 (TCP/IPv4)"**를 선택하고, **"속성"**을 클릭합니다.
+    
+    ### 6. **DNS 서버 주소 변경**
+    
+    - *"다음 DNS 서버 주소 사용"**을 선택합니다.
+    - **기본 DNS 서버**에 **192.168.111.200**을 입력합니다.
+    - **보조 DNS 서버**는 비워두거나, 다른 DNS 서버(원하는 경우)를 입력할 수 있습니다.
+    
+    ### 7. **확인 및 저장**
+    
+    - 설정이 완료되면 **"확인"** 버튼을 눌러 저장하고 모든 창을 닫습니다.
+
+⇒ http://hangaram.com 연결 성공
+
+⇒ 워드프레스 웹서버를 호스트 IP(192.168.219.108) 또는 도메인([hangaram.com](http://hangaram.com/))으로 접속하도록 변경>
+설정 변경:
+
+- WordPress 관리자 페이지에 접속 ([http://192.168.219.108/wp-admin](http://192.168.1.10/wp-admin))
+- '설정' > '일반' 메뉴로 이동
+- "WordPress 주소(URL)"와 "사이트 주소(URL)"를 [http://hangaram.com](http://hangaram.com/) 변경
+- 변경사항을 저장
+
+끝!^^
